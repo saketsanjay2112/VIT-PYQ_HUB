@@ -1,0 +1,44 @@
+{
+  "entities": {
+    "Subject": {
+      "title": "Subject",
+      "description": "An academic subject within a branch",
+      "type": "object",
+      "properties": {
+        "name": { "type": "string" },
+        "code": { "type": "string" },
+        "professor": { "type": "string" },
+        "branchId": { "type": "string" },
+        "year": { "type": "number" },
+        "semester": { "type": "string", "enum": ["Fall", "Winter"] }
+      },
+      "required": ["name", "code", "professor", "branchId", "year", "semester"]
+    },
+    "Paper": {
+      "title": "Paper",
+      "description": "A PYQ paper for a specific subject",
+      "type": "object",
+      "properties": {
+        "subjectId": { "type": "string" },
+        "year": { "type": "number" },
+        "examYear": { "type": "number" },
+        "semester": { "type": "string", "enum": ["Fall", "Winter"] },
+        "type": { "type": "string", "enum": ["FAT", "CAT1", "CAT2"] },
+        "fileName": { "type": "string" },
+        "fileUrl": { "type": "string" },
+        "uploadedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["subjectId", "year", "examYear", "semester", "type", "fileName", "fileUrl", "uploadedAt"]
+    }
+  },
+  "firestore": {
+    "subjects/{subjectId}": {
+      "schema": "Subject",
+      "description": "Collection of subjects"
+    },
+    "papers/{paperId}": {
+      "schema": "Paper",
+      "description": "Collection of uploaded papers"
+    }
+  }
+}

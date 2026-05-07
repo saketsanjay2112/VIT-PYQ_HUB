@@ -1,0 +1,52 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // Default deny
+    match /{document=**} {
+      allow read, write: if false;
+    }
+
+    // Global helpers
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    function isValidId(id) {
+      return id is string && id.size() <= 128 && id.matches('^[a-zA-Z0-9_\\-]+$');
+    }
+
+    // Subjects
+    match /subjects/{subjectId} {
+      function isValidSubject(data) {
+        return data.name is string && data.name.size() > 0 && data.name.size() <= 200 &&
+               data.code is string && data.code.size() > 0 && data.code.size() <= 20 &&
+               data.professor is string && data.professor.size() > 0 && data.professor.size() <= 100 &&
+               data.branchId is string && data.branchId.size() > 0 &&
+               data.year in [1, 2] &&
+               data.semester in ['Fall', 'Winter'];
+      }
+
+      allow read: if true; // Publicly readable
+      allow create: if isSignedIn() && isValidSubject(request.resource.data);
+      allow update: if isSignedIn() && isValidSubject(request.resource.data) && 
+                      (request.resource.data.diff(resource.data).affectedKeys().hasOnly(['name', 'professor', 'code']));
+    }
+
+    // Papers
+    match /papers/{paperId} {
+      function isValidPaper(data) {
+        return data.subjectId is string &&
+               data.year in [1, 2] &&
+               data.examYear is number && data.examYear >= 1990 && data.examYear <= 2100 &&
+               data.semester in ['Fall', 'Winter'] &&
+               data.type in ['FAT', 'CAT1', 'CAT2'] &&
+               data.fileName is string && data.fileName.size() > 0 &&
+               data.fileUrl is string && data.fileUrl.size() > 0 &&
+               data.uploadedAt is string;
+      }
+
+      allow read: if true; // Publicly readable
+      allow create: if isSignedIn() && isValidPaper(request.resource.data);
+    }
+  }
+}
