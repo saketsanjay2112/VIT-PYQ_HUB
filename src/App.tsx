@@ -42,6 +42,12 @@ import {
   doc,
   getDocFromServer
 } from 'firebase/firestore';
+import {
+  getStorage,
+  ref,
+  uploadBytesResumable,
+  getDownloadURL
+} from 'firebase/storage';
 import firebaseConfig from '../firebase-applet-config.json';
 import { SENSE_BRANCHES, type Branch, type Subject, type UploadedPaper } from './types';
 
@@ -49,6 +55,7 @@ import { SENSE_BRANCHES, type Branch, type Subject, type UploadedPaper } from '.
 const app = initializeApp(firebaseConfig);
 const db = getFirestore(app, firebaseConfig.firestoreDatabaseId);
 const auth = getAuth(app);
+const storage = getStorage(app);
 const googleProvider = new GoogleAuthProvider();
 
 // Test Connection
@@ -106,6 +113,8 @@ export default function App() {
   const [activePaperType, setActivePaperType] = useState<'FAT' | 'CAT1' | 'CAT2'>('FAT');
   const [viewingPaper, setViewingPaper] = useState<UploadedPaper | null>(null);
   const [user, setUser] = useState<FirebaseUser | null>(null);
+  const [isUploading, setIsUploading] = useState(false);
+  const [uploadProgress, setUploadProgress] = useState(0);
 
   const fileInputRef = useRef<HTMLInputElement>(null);
 
@@ -159,6 +168,10 @@ export default function App() {
         return;
       }
       if (error.code === 'auth/cancelled-by-user') {
+        return;
+      }
+      if (error.code === 'auth/unauthorized-domain') {
+        alert("Domain Not Authorized: Please add this URL to 'Authorized domains' in your Firebase Console (Authentication > Settings).");
         return;
       }
       console.error('Login Error:', error);
@@ -228,10 +241,15 @@ export default function App() {
 
   const handleFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
-    if (!file || !selectedSubject) return;
+    if (!file || !selectedSubject || !user) {
+      if (!user) alert("Please login to contribute.");
+      return;
+    }
 
-    if (!user) {
-      alert("Please login to contribute.");
+    // Limit to 10MB
+    const MAX_SIZE = 10 * 1024 * 1024;
+    if (file.size > MAX_SIZE) {
+      alert("File is too large. Please upload files smaller than 10MB.");
       return;
     }
 
@@ -240,44 +258,57 @@ export default function App() {
       return;
     }
 
-    const examYear = parseInt(prompt("Enter the year of the paper (e.g. 2023):") || new Date().getFullYear().toString());
+    const examYearStr = prompt("Enter the year of the paper (e.g. 2023):");
+    if (examYearStr === null) return; // User cancelled
+    const examYear = parseInt(examYearStr) || new Date().getFullYear();
 
-    // Convert file to base64 for simplified storage without Firebase Storage
-    // NOTE: In production, use Firebase Storage. This is limited by Firestore 1MB doc size.
-    const reader = new FileReader();
-    reader.onload = async (event) => {
-      const base64 = event.target?.result as string;
-      
-      if (base64.length > 800000) { // Approx 800KB limit for base64 string to keep under 1MB Firestore limit
-        alert("File too large. Please upload files smaller than 500KB for this demo.");
-        return;
+    setIsUploading(true);
+    setUploadProgress(0);
+
+    const storagePath = `papers/${selectedSubject.id}/${Date.now()}_${file.name}`;
+    const storageRef = ref(storage, storagePath);
+    const uploadTask = uploadBytesResumable(storageRef, file);
+
+    uploadTask.on('state_changed', 
+      (snapshot) => {
+        const progress = (snapshot.bytesTransferred / snapshot.totalBytes) * 100;
+        setUploadProgress(progress);
+      }, 
+      (error) => {
+        console.error("Upload failed:", error);
+        alert("Upload failed. This might be due to security rules. Please try again or contact support.");
+        setIsUploading(false);
+      }, 
+      async () => {
+        try {
+          const downloadURL = await getDownloadURL(uploadTask.snapshot.ref);
+          
+          const paperData = {
+            subjectId: selectedSubject.id,
+            year: selectedYear,
+            semester: activeTab,
+            type: activePaperType,
+            fileName: file.name,
+            fileUrl: downloadURL,
+            uploadedAt: new Date().toISOString(),
+            examYear: examYear,
+            uploadedBy: user.uid
+          };
+
+          const docRef = await addDoc(collection(db, 'papers'), paperData);
+          setUploadCount(prev => prev + 1);
+          if (fileInputRef.current) fileInputRef.current.value = '';
+          
+          // Automatically open for viewing
+          setViewingPaper({ id: docRef.id, ...paperData } as UploadedPaper);
+          setCurrentPage('viewer');
+          setIsUploading(false);
+        } catch (error) {
+          handleFirestoreError(error, OperationType.CREATE, 'papers');
+          setIsUploading(false);
+        }
       }
-
-      const paperData = {
-        subjectId: selectedSubject.id,
-        year: selectedYear,
-        semester: activeTab,
-        type: activePaperType,
-        fileName: file.name,
-        fileUrl: base64,
-        uploadedAt: new Date().toISOString(),
-        examYear: examYear,
-        uploadedBy: user.uid
-      };
-
-      try {
-        const docRef = await addDoc(collection(db, 'papers'), paperData);
-        setUploadCount(prev => prev + 1);
-        if (fileInputRef.current) fileInputRef.current.value = '';
-        
-        // Automatically open for viewing
-        setViewingPaper({ id: docRef.id, ...paperData } as UploadedPaper);
-        setCurrentPage('viewer');
-      } catch (error) {
-        handleFirestoreError(error, OperationType.CREATE, 'papers');
-      }
-    };
-    reader.readAsDataURL(file);
+    );
   };
 
   const renderHome = () => (
@@ -598,14 +629,14 @@ export default function App() {
                       
                       <button 
                         onClick={() => fileInputRef.current?.click()}
-                        disabled={uploadCount >= 10}
+                        disabled={uploadCount >= 10 || isUploading}
                         className={`w-full py-4 rounded-2xl text-[10px] font-black uppercase tracking-widest transition-all ${
-                          uploadCount >= 10 
+                          (uploadCount >= 10 || isUploading)
                           ? 'bg-neutral-800 text-neutral-600 cursor-not-allowed' 
                           : 'bg-white text-black hover:bg-lime-500 shadow-2xl'
                         }`}
                       >
-                        {uploadCount >= 10 ? 'UPLOAD LIMIT REACHED' : 'BROWSE FILES'}
+                        {isUploading ? `UPLOADING ${Math.round(uploadProgress)}%` : uploadCount >= 10 ? 'UPLOAD LIMIT REACHED' : 'BROWSE FILES'}
                       </button>
                       <input 
                         type="file" 
@@ -614,6 +645,9 @@ export default function App() {
                         onChange={handleFileUpload}
                         accept="application/pdf,image/*"
                       />
+                      <p className="mt-4 text-[9px] text-neutral-500 font-bold uppercase tracking-widest text-center px-4 leading-relaxed italic">
+                         Supports PDF & Images • Max 10MB per file
+                      </p>
                     </div>
 
                     <div className="space-y-4">
