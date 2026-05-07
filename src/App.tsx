@@ -265,50 +265,63 @@ export default function App() {
     setIsUploading(true);
     setUploadProgress(0);
 
-    const storagePath = `papers/${selectedSubject.id}/${Date.now()}_${file.name}`;
-    const storageRef = ref(storage, storagePath);
-    const uploadTask = uploadBytesResumable(storageRef, file);
+    try {
+      const storagePath = `papers/${selectedSubject.id}/${Date.now()}_${file.name}`;
+      const storageRef = ref(storage, storagePath);
+      const uploadTask = uploadBytesResumable(storageRef, file);
 
-    uploadTask.on('state_changed', 
-      (snapshot) => {
-        const progress = (snapshot.bytesTransferred / snapshot.totalBytes) * 100;
-        setUploadProgress(progress);
-      }, 
-      (error) => {
-        console.error("Upload failed:", error);
-        alert("Upload failed. This might be due to security rules. Please try again or contact support.");
-        setIsUploading(false);
-      }, 
-      async () => {
-        try {
-          const downloadURL = await getDownloadURL(uploadTask.snapshot.ref);
-          
-          const paperData = {
-            subjectId: selectedSubject.id,
-            year: selectedYear,
-            semester: activeTab,
-            type: activePaperType,
-            fileName: file.name,
-            fileUrl: downloadURL,
-            uploadedAt: new Date().toISOString(),
-            examYear: examYear,
-            uploadedBy: user.uid
-          };
-
-          const docRef = await addDoc(collection(db, 'papers'), paperData);
-          setUploadCount(prev => prev + 1);
-          if (fileInputRef.current) fileInputRef.current.value = '';
-          
-          // Automatically open for viewing
-          setViewingPaper({ id: docRef.id, ...paperData } as UploadedPaper);
-          setCurrentPage('viewer');
-          setIsUploading(false);
-        } catch (error) {
-          handleFirestoreError(error, OperationType.CREATE, 'papers');
-          setIsUploading(false);
+      // Listener for progress
+      uploadTask.on('state_changed', 
+        (snapshot) => {
+          const progress = Math.round((snapshot.bytesTransferred / snapshot.totalBytes) * 100);
+          setUploadProgress(progress);
+        }, 
+        (error) => {
+          console.error("Upload task error:", error);
+          throw error;
         }
+      );
+
+      // Wait for upload completion
+      await uploadTask;
+      const downloadURL = await getDownloadURL(uploadTask.snapshot.ref);
+      
+      const paperData = {
+        subjectId: selectedSubject.id,
+        year: selectedYear,
+        semester: activeTab,
+        type: activePaperType,
+        fileName: file.name,
+        fileUrl: downloadURL,
+        uploadedAt: new Date().toISOString(),
+        examYear: examYear,
+        uploadedBy: user.uid
+      };
+
+      const docRef = await addDoc(collection(db, 'papers'), paperData);
+      
+      setUploadCount(prev => prev + 1);
+      if (fileInputRef.current) fileInputRef.current.value = '';
+      
+      // Automatically open for viewing
+      setViewingPaper({ id: docRef.id, ...paperData } as UploadedPaper);
+      setCurrentPage('viewer');
+      setIsUploading(false);
+      setUploadProgress(0);
+    } catch (error: any) {
+      console.error("Full upload process error:", error);
+      let errorMsg = "Upload failed. ";
+      if (error.code === 'storage/unauthorized') {
+        errorMsg += "Access denied. Check security rules.";
+      } else if (error.code === 'storage/quota-exceeded') {
+        errorMsg += "Storage quota exceeded.";
+      } else {
+        errorMsg += error.message || "Unknown error occurred.";
       }
-    );
+      alert(errorMsg);
+      setIsUploading(false);
+      setUploadProgress(0);
+    }
   };
 
   const renderHome = () => (

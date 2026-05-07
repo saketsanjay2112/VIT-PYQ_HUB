@@ -13,7 +13,10 @@ export type Subject = {
   professor: string;
   year: number;
   semester: 'Fall' | 'Winter';
+  branchId: string;
   lastPaperYear?: number;
+  createdBy?: string;
+  createdAt?: string;
 };
 
 export type UploadedPaper = {
